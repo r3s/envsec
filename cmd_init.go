@@ -9,6 +9,11 @@ func cmdInit() error {
 	path := keyfile()
 	if _, err := os.Stat(path); err == nil {
 		fmt.Println("==> key already exists at", path)
+		if fixed, err := fixKeyPerms(path); err != nil {
+			return err
+		} else if fixed {
+			fmt.Println("    permissions were loose — tightened to 0600")
+		}
 	} else {
 		fmt.Println("==> generating a new per-machine key")
 		if err := ensureKey(); err != nil {

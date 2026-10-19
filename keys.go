@@ -31,12 +31,15 @@ func setKeyEnv() {
 }
 
 // ensureKey generates a fresh age key at the keyfile path unless one exists.
-// The private identity is written in the age keys.txt format (0600).
+// The private identity is written in the age keys.txt format and the file is
+// forced to owner read/write only (0600), independent of umask.
 func ensureKey() error {
 	path := keyfile()
 	if data, err := os.ReadFile(path); err == nil {
 		if _, err := age.ParseIdentities(bytes.NewReader(data)); err == nil {
-			return nil // key exists and is parseable
+			// key exists and is parseable; only tighten permissions if loose
+			_, err := fixKeyPerms(path)
+			return err
 		}
 	}
 	// No usable key yet: generate one.
@@ -52,7 +55,29 @@ func ensureKey() error {
 	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
 		return fmt.Errorf("cannot write key to %s: %w", path, err)
 	}
+	// Make the mode explicit: os.WriteFile's mode is masked by umask, which
+	// could otherwise leave the key unreadable by its owner (e.g. umask 0700).
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("cannot set key permissions on %s: %w", path, err)
+	}
 	return nil
+}
+
+// fixKeyPerms forces the key file to owner read/write only (0600) and reports
+// whether a change was needed. It is a no-op when the permission is already
+// correct, so it is safe to run on every init.
+func fixKeyPerms(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode().Perm() == 0o600 {
+		return false, nil
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return false, fmt.Errorf("cannot chmod key %s to 0600: %w", path, err)
+	}
+	return true, nil
 }
 
 // pubkey returns this machine's age public key derived from the private key at

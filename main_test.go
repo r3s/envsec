@@ -210,6 +210,38 @@ func TestInitCreatesKey(t *testing.T) {
 	}
 }
 
+// TestKeyFilePermissions verifies a freshly created key is owner read/write
+// only (0600), regardless of the process umask.
+func TestKeyFilePermissions(t *testing.T) {
+	keys := setupKey(t) // generates the key
+	info, err := os.Stat(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("key file mode = %o, want 600", got)
+	}
+}
+
+// TestInitFixesLooseKeyPerms verifies init tightens a pre-existing key whose
+// permissions are too open (e.g. 0644).
+func TestInitFixesLooseKeyPerms(t *testing.T) {
+	keys := setupKey(t)
+	if err := os.Chmod(keys, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdInit(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	info, err := os.Stat(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("after init, key mode = %o, want 600", got)
+	}
+}
+
 // TestAddRecipient simulates a second machine: B seals a file with their own
 // key, A grants B access, and B can then decrypt it.
 func TestAddRecipient(t *testing.T) {
