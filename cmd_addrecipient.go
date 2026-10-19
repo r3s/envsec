@@ -29,8 +29,7 @@ func cmdAddRecipient(args []string) error {
 		return err
 	}
 
-	// Collect the recipients we already have, and append any new ones to the
-	// last key group (files created by envsec always have a single group).
+	// append new keys to the last group (files created by envsec have one)
 	have := map[string]bool{}
 	for _, g := range groups {
 		for _, k := range g {

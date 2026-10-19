@@ -35,7 +35,7 @@ func cmdSeal(args []string) error {
 		}
 	}()
 
-	// 1. reveal current secrets so partial pull scripts see the full file
+	// reveal existing secrets so partial pull scripts see the full file
 	var keyGroups []sops.KeyGroup
 	if _, err := os.Stat(sealed); err == nil {
 		groups, err := keyGroupsFromSealed(sealed)
@@ -52,17 +52,15 @@ func cmdSeal(args []string) error {
 		}
 	}
 
-	// 2. run the repo's own pull script (edits ENVFILE in place)
+	// run the repo's pull script (edits envfile in place)
 	if err := runPull(cmd); err != nil {
 		return err
 	}
 
-	// 3. the pull must have produced the file
 	if _, err := os.Stat(envfile); err != nil {
 		fatal("pull command produced no %s", envfile)
 	}
 
-	// 4. normalize matching outer quotes, re-encrypt atomically
 	raw, err := os.ReadFile(envfile)
 	if err != nil {
 		return err
@@ -71,8 +69,7 @@ func cmdSeal(args []string) error {
 
 	var sealedBytes []byte
 	if len(keyGroups) > 0 {
-		// keep every recipient that was there before, so re-sealing can
-		// never silently lock out team members
+		// keep every existing recipient, so re-sealing never locks anyone out
 		sealedBytes, err = encryptPlainWithKeyGroups(norm, keyGroups)
 	} else {
 		sealedBytes, err = encryptPlain(norm, []string{pubkey()})

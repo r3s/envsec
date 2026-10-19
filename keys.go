@@ -10,9 +10,8 @@ import (
 	"filippo.io/age"
 )
 
-// keyfile returns the path of the machine's age private key. Like the bash
-// envx, it honors SOPS_AGE_KEY_FILE and defaults to ~/.config/sops/age/keys.txt
-// (the same location the sops CLI / age keysource use).
+// keyfile returns the machine's age private key path: $SOPS_AGE_KEY_FILE if
+// set, else ~/.config/sops/age/keys.txt (the sops CLI / age keysource default).
 func keyfile() string {
 	if f := os.Getenv("SOPS_AGE_KEY_FILE"); f != "" {
 		return f
@@ -24,8 +23,7 @@ func keyfile() string {
 	return filepath.Join(home, ".config", "sops", "age", "keys.txt")
 }
 
-// setKeyEnv exports SOPS_AGE_KEY_FILE so the sops age keysource (and therefore
-// decrypt/encrypt) picks up our machine key, exactly like envx did.
+// setKeyEnv exports SOPS_AGE_KEY_FILE so sops' age keysource finds the key.
 func setKeyEnv() {
 	os.Setenv("SOPS_AGE_KEY_FILE", keyfile())
 }
@@ -37,12 +35,10 @@ func ensureKey() error {
 	path := keyfile()
 	if data, err := os.ReadFile(path); err == nil {
 		if _, err := age.ParseIdentities(bytes.NewReader(data)); err == nil {
-			// key exists and is parseable; only tighten permissions if loose
 			_, err := fixKeyPerms(path)
 			return err
 		}
 	}
-	// No usable key yet: generate one.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("cannot create key dir: %w", err)
 	}
@@ -55,17 +51,15 @@ func ensureKey() error {
 	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
 		return fmt.Errorf("cannot write key to %s: %w", path, err)
 	}
-	// Make the mode explicit: os.WriteFile's mode is masked by umask, which
-	// could otherwise leave the key unreadable by its owner (e.g. umask 0700).
+	// Explicit chmod: WriteFile's mode is masked by umask, which could leave
+	// the key unreadable by its owner (e.g. umask 0700).
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("cannot set key permissions on %s: %w", path, err)
 	}
 	return nil
 }
 
-// fixKeyPerms forces the key file to owner read/write only (0600) and reports
-// whether a change was needed. It is a no-op when the permission is already
-// correct, so it is safe to run on every init.
+// fixKeyPerms forces path to 0600, reporting whether a change was needed.
 func fixKeyPerms(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {

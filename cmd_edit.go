@@ -70,8 +70,8 @@ func cmdEdit(args []string) error {
 	return atomicWrite(sealed, sealedBytes)
 }
 
-// runEditor runs $EDITOR on the given file, falling back to vi. The editor
-// string is split on whitespace (mirrors envx's plain "$EDITOR file" call).
+// runEditor invokes $EDITOR on path, falling back to vi. Arguments embedded
+// in the editor string (e.g. "code -w") are split on whitespace.
 func runEditor(editor, path string) error {
 	if editor == "" {
 		editor = "vi"

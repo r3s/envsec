@@ -27,12 +27,12 @@ func cmdRun(args []string) error {
 	return execWithEnv(cmd, plain)
 }
 
-// execWithEnv replaces the current process with cmd, mirroring sops exec-env:
-// the base environment is kept, and decrypted KEY=VALUE lines override it.
+// execWithEnv replaces the current process with cmd, with the decrypted
+// KEY=VALUE lines overriding the base environment.
 func execWithEnv(cmd []string, plain []byte) error {
 	argv0 := cmd[0]
+	// syscall.Exec is raw execve(2), which does not search $PATH
 	if !strings.ContainsRune(argv0, '/') {
-		// syscall.Exec is raw execve(2), which does not search $PATH.
 		resolved, err := exec.LookPath(argv0)
 		if err != nil {
 			return err

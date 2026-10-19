@@ -32,7 +32,7 @@ func TestStripOuterQuotes(t *testing.T) {
 		{`A=""`, "A="},       // empty quoted value
 		{`A="x"y`, `A="x"y`}, // quotes don't wrap the whole value
 		{`A="x=y"`, "A=x=y"}, // quotes around value containing '='
-		{`# c="x"`, "# c=x"}, // parity with envx's sed (comments allowed)
+		{`# c="x"`, "# c=x"}, // comments allowed (quotes still normalized)
 	}
 	for _, c := range cases {
 		if got := stripOuterQuotes(c.in); got != c.want {

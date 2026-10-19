@@ -149,16 +149,14 @@ func atomicWrite(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// writePlaintext writes a temporary plaintext secret file (used by seal so a
-// pull script can read/append existing values). 0600 so secrets are never
-// world-readable, even under a permissive umask.
+// writePlaintext writes a plaintext file the pull script can read; 0600 keeps
+// secrets private even under a permissive umask.
 func writePlaintext(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// stripOuterQuotes mirrors envx's sed normalization: dotenv values that are
-// fully wrapped in matching double or single quotes lose those quotes, so
-// values match dotenv semantics when loaded.
+// stripOuterQuotes drops matching surrounding quotes so values match dotenv
+// semantics when loaded.
 func stripOuterQuotes(line string) string {
 	eq := strings.IndexByte(line, '=')
 	if eq <= 0 || len(line) <= eq+2 {
@@ -183,8 +181,7 @@ func normalizeDotenv(data []byte) []byte {
 	return bytes.Join(lines, []byte("\n"))
 }
 
-// parseEnvLines returns the KEY=VALUE lines of a decrypted dotenv, skipping
-// blank lines and comments — mirroring sops exec-env behavior.
+// parseEnvLines returns KEY=VALUE lines, skipping blank lines and comments.
 func parseEnvLines(plain []byte) []string {
 	var out []string
 	for _, line := range strings.Split(string(plain), "\n") {

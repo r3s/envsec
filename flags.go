@@ -6,9 +6,8 @@ import (
 	"os"
 )
 
-// parseFlags parses "[-f FILE] -- CMD..." with the same semantics as envx:
-// flags must come first (last one wins), parsing stops at "--" (removed) or
-// at the first non-flag argument, which starts the command.
+// parseFlags handles "[-f FILE] -- CMD...": flags before "--" (or before the
+// first non-flag arg) are options; everything after starts the command.
 func parseFlags(args []string) (envfile string, rest []string) {
 	fs := flag.NewFlagSet("envsec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

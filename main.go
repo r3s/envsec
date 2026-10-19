@@ -1,17 +1,4 @@
 // Command envsec manages per-machine encrypted .env files using sops + age.
-//
-// envx — per-machine encrypted .env workflow using sops + age
-//
-//	envsec init                     set up this machine (generate a key)
-//	envsec doctor                   check key, print this machine's public key
-//	envsec seal [-f FILE] -- CMD... run your repo's pull script, then (re)encrypt the result
-//	envsec run  [-f FILE] -- CMD... decrypt in memory and run CMD with secrets injected
-//	envsec edit [-f FILE]           open the sealed secrets in $EDITOR, re-encrypt on save
-//	envsec export [-f FILE]         decrypt back to a plaintext file on disk (debug only)
-//
-// The sealed file for FILE is "FILE.enc.env" (default FILE is .env.local).
-// Nothing here is machine-specific: the public key is derived from the local
-// private key at ~/.config/sops/age/keys.txt, so this binary is safe to commit.
 package main
 
 import (
@@ -69,8 +56,8 @@ func usage() {
 }
 
 func main() {
-	// The age keysource inside sops resolves identities from SOPS_AGE_KEY_FILE.
-	// Set it up-front (as the bash envx did) so decrypt/encrypt see our key.
+	// sops resolves age identities from SOPS_AGE_KEY_FILE; export it so
+	// encrypt/decrypt pick up the machine key.
 	setKeyEnv()
 
 	args := os.Args[1:]
