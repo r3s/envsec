@@ -15,6 +15,12 @@ Per-machine encrypted `.env` workflow using [sops](https://github.com/getsops/so
 go install github.com/r3s/envsec@latest
 ```
 
+For a release build (smaller static binary):
+
+```sh
+make release   # CGO_ENABLED=0 go build -trimpath -ldflags "-s -w"
+```
+
 ## Usage
 
 ```sh
