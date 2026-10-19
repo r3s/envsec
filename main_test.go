@@ -209,3 +209,87 @@ func TestInitCreatesKey(t *testing.T) {
 		t.Errorf("pubkey %q does not look like an age public key", pk)
 	}
 }
+
+// TestAddRecipient simulates a second machine: B seals a file with their own
+// key, A grants B access, and B can then decrypt it.
+func TestAddRecipient(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// machine A
+	keyA := setupKey(t)
+	aPub := pubkey()
+
+	// machine B: its own key file, in another temp dir
+	keyB := filepath.Join(t.TempDir(), "keys.txt")
+	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
+	setKeyEnv()
+	if err := ensureKey(); err != nil {
+		t.Fatalf("ensureKey (B): %v", err)
+	}
+	bPub := pubkey()
+
+	// back to A, seal a file to A only
+	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
+	setKeyEnv()
+	sealed, err := encryptPlain([]byte("SECRET=value\n"), []string{aPub})
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if err := os.WriteFile(".env.local.enc.env", sealed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// B cannot decrypt yet
+	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
+	setKeyEnv()
+	if _, err := decryptSealed(".env.local.enc.env"); err == nil {
+		t.Fatal("B could decrypt before being granted access")
+	}
+
+	// A grants B access
+	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
+	setKeyEnv()
+	if err := cmdAddRecipient([]string{bPub}); err != nil {
+		t.Fatalf("addrecipient: %v", err)
+	}
+
+	// both recipients present in metadata
+	recs, err := recipientsFromSealed(".env.local.enc.env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recs, []string{aPub, bPub}) {
+		t.Errorf("recipients after add = %v, want %v", recs, []string{aPub, bPub})
+	}
+
+	// B can decrypt now; A still can
+	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
+	setKeyEnv()
+	got, err := decryptSealed(".env.local.enc.env")
+	if err != nil {
+		t.Fatalf("B could not decrypt after grant: %v", err)
+	}
+	if string(got) != "SECRET=value\n" {
+		t.Errorf("B got %q", got)
+	}
+	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
+	setKeyEnv()
+	if _, err := decryptSealed(".env.local.enc.env"); err != nil {
+		t.Fatalf("A lost access after grant: %v", err)
+	}
+
+	// granting the same key again is a no-op
+	if err := cmdAddRecipient([]string{bPub}); err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	recs, _ = recipientsFromSealed(".env.local.enc.env")
+	if !reflect.DeepEqual(recs, []string{aPub, bPub}) {
+		t.Errorf("recipients after duplicate add = %v", recs)
+	}
+
+	// an invalid public key is rejected
+	if err := cmdAddRecipient([]string{"not-an-age-key"}); err == nil {
+		t.Fatal("invalid pubkey was accepted")
+	}
+}

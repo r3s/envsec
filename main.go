@@ -19,18 +19,44 @@ import (
 	"os"
 )
 
-const usageText = `envsec — per-machine encrypted .env workflow using sops + age
+const usageText = `envsec — per-machine encrypted .env workflow (sops + age, compiled in)
 
-  envsec init                     set up this machine (generate a key)
-  envsec doctor                   check key, print this machine's public key
-  envsec seal [-f FILE] -- CMD... run your repo's pull script, then (re)encrypt the result
-  envsec run  [-f FILE] -- CMD... decrypt in memory and run CMD with secrets injected
-  envsec edit [-f FILE]           open the sealed secrets in $EDITOR, re-encrypt on save
-  envsec export [-f FILE]         decrypt back to a plaintext file on disk (debug only)
+USAGE
+    envsec <command> [flags] [-f FILE] [-- cmd...]
 
-The sealed file for FILE is "FILE.enc.env" (default FILE is .env.local).
-Secrets are held in memory (run) or in plaintext files that are removed on
-exit (seal/edit/export); encrypted output is written atomically.
+SETUP  (once per machine)
+    init             generate this machine's age key, print its public key
+    doctor           show key status and embedded sops/age versions
+
+SECRETS
+    seal [-f FILE] -- CMD...   run a pull script, then (re)encrypt to FILE.enc.env
+    run  [-f FILE] -- CMD...   decrypt in memory and run CMD with the secrets
+    edit [-f FILE]             open sealed secrets in $EDITOR, re-encrypt on save
+    export [-f FILE]           write decrypted secrets to FILE on disk (debug only)
+
+ACCESS
+    addrecipient [-f FILE] PUBKEY...   grant other machines access to FILE.enc.env
+
+FLAGS
+    -f, --file FILE   secrets file (default: .env.local); sealed file: FILE.enc.env
+
+EXAMPLES
+    envsec init
+    envsec seal -- ./scripts/pull-secrets.sh
+    envsec run -- npm run dev
+    envsec addrecipient age1mn2...
+    envsec edit
+
+FIRST-TIME FLOW
+    1. envsec init                 # once per machine
+    2. envsec seal -- <pull cmd>   # fetch & encrypt, commit FILE.enc.env
+    3. envsec run -- <cmd>         # daily use; secrets never touch disk
+    Team mates: they send you the public key from 'envsec doctor', you run
+    'envsec addrecipient <pubkey>', they pull and run.
+
+KEY
+    Private: $SOPS_AGE_KEY_FILE or ~/.config/sops/age/keys.txt  (back it up)
+    Public:  'envsec doctor' / 'envsec init' — safe to share.
 `
 
 func fatal(format string, args ...any) {
@@ -66,6 +92,8 @@ func main() {
 		err = cmdEdit(args[1:])
 	case "export":
 		err = cmdExport(args[1:])
+	case "addrecipient":
+		err = cmdAddRecipient(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return

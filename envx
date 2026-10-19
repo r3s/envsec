@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# envx — per-machine encrypted .env workflow using sops + age
+#
+#   envx init                     set up this machine (install check + generate key)
+#   envx doctor                   check tools, key, and print this machine's public key
+#   envx seal [-f FILE] -- CMD... run your repo's pull script, then (re)encrypt the result
+#   envx run  [-f FILE] -- CMD... decrypt in memory and run CMD with secrets injected
+#   envx edit [-f FILE]           open the sealed secrets in $EDITOR, re-encrypt on save
+#   envx export [-f FILE]         decrypt back to a plaintext file on disk (debug only)
+#
+# The sealed file for FILE is "FILE.enc.env" (default FILE is .env.local).
+# Nothing here is machine-specific: the public key is derived from the local
+# private key at ~/.config/sops/age/keys.txt, so this script is safe to commit.
+
+set -euo pipefail
+
+KEYFILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
+export SOPS_AGE_KEY_FILE="$KEYFILE"
+
+die() { echo "envx: $*" >&2; exit 1; }
+
+need_tools() {
+  command -v sops >/dev/null || die "sops not found — run 'envx init' (or: brew install sops)"
+  command -v age  >/dev/null || die "age not found — run 'envx init' (or: brew install age)"
+}
+
+need_key() {
+  [ -f "$KEYFILE" ] || die "no key at $KEYFILE — run 'envx init' on this machine"
+}
+
+pubkey() { age-keygen -y "$KEYFILE"; }   # derive recipient from the private key
+
+# split "[-f FILE] -- cmd..." ; sets $ENVFILE and leaves CMD in the CMD array
+ENVFILE=".env.local"; CMD=()
+parse() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f|--file) ENVFILE="$2"; shift 2 ;;
+      --) shift; CMD=("$@"); return ;;
+      *) CMD=("$@"); return ;;
+    esac
+  done
+}
+
+cmd_init() {
+  echo "==> checking tools"
+  if command -v brew >/dev/null; then
+    command -v sops >/dev/null || brew install sops
+    command -v age  >/dev/null || brew install age
+  else
+    need_tools
+  fi
+  mkdir -p "$(dirname "$KEYFILE")"
+  if [ -f "$KEYFILE" ]; then
+    echo "==> key already exists at $KEYFILE"
+  else
+    echo "==> generating a new per-machine key"
+    age-keygen -o "$KEYFILE"
+    chmod 600 "$KEYFILE"
+  fi
+  echo
+  echo "This machine's PUBLIC key (safe to share): $(pubkey)"
+  echo "PRIVATE key lives at: $KEYFILE  (back this up to your password manager)"
+}
+
+cmd_doctor() {
+  need_tools
+  echo "sops:    $(command -v sops)  ($(sops --version 2>/dev/null | head -1))"
+  echo "age:     $(command -v age)"
+  if [ -f "$KEYFILE" ]; then
+    echo "key:     $KEYFILE"
+    echo "pubkey:  $(pubkey)"
+  else
+    echo "key:     MISSING — run 'envx init'"
+  fi
+}
+
+cmd_seal() {
+  need_tools; need_key; parse "$@"
+  [ ${#CMD[@]} -gt 0 ] || die "nothing to run — usage: envx seal [-f FILE] -- <pull command>"
+  local sealed="$ENVFILE.enc.env"
+  # clean up any plaintext however we exit (success, error, Ctrl-C)
+  trap 'rm -f "$ENVFILE" "$ENVFILE.norm"' EXIT
+  # 1. reveal current secrets so partial pull scripts have the full file
+  [ -f "$sealed" ] && sops decrypt --input-type dotenv --output-type dotenv "$sealed" > "$ENVFILE"
+  # 2. run the repo's own pull script (edits $ENVFILE in place)
+  "${CMD[@]}"
+  [ -f "$ENVFILE" ] || die "pull command produced no $ENVFILE"
+  # 3. strip matching outer quotes so values match dotenv semantics
+  sed -E 's/^([^=]+)="(.*)"$/\1=\2/; s/^([^=]+)='"'"'(.*)'"'"'$/\1=\2/' "$ENVFILE" > "$ENVFILE.norm"
+  mv "$ENVFILE.norm" "$ENVFILE"
+  # 4. re-encrypt atomically
+  sops encrypt --age "$(pubkey)" --input-type dotenv --output-type dotenv "$ENVFILE" > "$sealed.tmp"
+  mv "$sealed.tmp" "$sealed"
+  echo "sealed -> $sealed"
+}
+
+cmd_run() {
+  need_tools; need_key; parse "$@"
+  [ ${#CMD[@]} -gt 0 ] || die "nothing to run — usage: envx run [-f FILE] -- <command>"
+  [ -f "$ENVFILE.enc.env" ] || die "no sealed file $ENVFILE.enc.env — run 'envx seal' first"
+  exec sops exec-env "$ENVFILE.enc.env" "${CMD[*]}"
+}
+
+cmd_edit() {
+  need_tools; need_key; parse "$@"
+  local sealed="$ENVFILE.enc.env"
+  if [ -f "$sealed" ]; then sops edit "$sealed"; else sops edit --age "$(pubkey)" "$sealed"; fi
+}
+
+cmd_export() {
+  need_tools; need_key; parse "$@"
+  [ -f "$ENVFILE.enc.env" ] || die "no sealed file $ENVFILE.enc.env"
+  sops decrypt --input-type dotenv --output-type dotenv "$ENVFILE.enc.env" > "$ENVFILE"
+  echo "wrote PLAINTEXT -> $ENVFILE  (delete it when done: rm $ENVFILE)" >&2
+}
+
+sub="${1:-}"; shift || true
+case "$sub" in
+  init)   cmd_init "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  seal)   cmd_seal "$@" ;;
+  run)    cmd_run "$@" ;;
+  edit)   cmd_edit "$@" ;;
+  export) cmd_export "$@" ;;
+  ""|-h|--help|help)
+    sed -n '2,20p' "$0" | sed 's/^#\s\{0,1\}//' ;;
+  *) die "unknown command '$sub' (try: envx help)" ;;
+esac
