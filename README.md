@@ -4,9 +4,7 @@ Per-machine encrypted `.env` workflow using [sops](https://github.com/getsops/so
 
 ## Why
 
-Whenever I setup a repo, I have my API keys and other credentials in the .env file (or maybe .env.local) and I've always wondered:
-What if some malicious actor gains access to my system and I don't know it? What if they are able to read the files remotely?
-All these API keys and other secrets will be theirs to use. This simple utility is to prevent that and have the files encrypted at rest.
+Whenever I set up a repo, I keep my API keys and other credentials in a `.env` file (or `.env.local`). I've always wondered: what if a malicious actor gains access to my system, or reads my files remotely, and I never know it? Suddenly all of those secrets are theirs to use. This utility prevents that by encrypting the files at rest.
 
 - Secrets live in the repo as a **sealed dotenv file** (`FILE.enc.env`).
 - Each machine has its **own age key**, so only authorized machines can decrypt.
@@ -51,7 +49,7 @@ This generates the machine's age key and prints its public key. Run `envsec doct
 
 ### 2. Bootstrap the repo's secrets (first time, on your machine)
 
-If you have a script that fetches the secrets from wherever the source of truth lives (password manager, upstream API, etc.), you can pass on the command for that:
+If you have a script that fetches the secrets from wherever the source of truth lives (password manager, upstream API, etc.), you can pass that command to `seal`:
 
 ```sh
 envsec seal -- ./scripts/pull-secrets.sh
