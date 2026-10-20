@@ -1,6 +1,21 @@
-# Build artifact
+# Build artifacts
 /envsec
+*.test
+coverage.out
 
-# Plaintext secrets should never be committed
+# Plaintext secrets — never commit these
 .env.local
 .env*.local
+
+# envsec temp files (normally removed on exit; may survive a crash/kill)
+.edit-*
+.seal-*
+
+# Editor / OS cruft
+.DS_Store
+*~
+*.swp
+.idea/
+.vscode/
+
+# Note: sealed files (*.enc.env) are NOT ignored — committing them is the point.
