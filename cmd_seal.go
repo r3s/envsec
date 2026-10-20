@@ -6,17 +6,33 @@ import (
 	"os/exec"
 	"os/signal"
 
+	"github.com/fatih/color"
 	"github.com/getsops/sops/v3"
+	"github.com/spf13/cobra"
 )
 
-// cmdSeal runs the repo's pull script against a plaintext .env file revealed
+func newSealCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "seal [-f FILE] -- CMD...",
+		Short: "run your pull script, then (re)encrypt to FILE.enc.env",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("nothing to run — usage: envsec seal [-f FILE] -- <pull command>")
+			}
+			return nil
+		},
+		RunE: func(c *cobra.Command, args []string) error {
+			return runSeal(fileFlag(c), args)
+		},
+	}
+	cmd.Flags().StringP("file", "f", ".env.local", "secrets file")
+	return cmd
+}
+
+// runSeal runs the repo's pull script against a plaintext .env file revealed
 // from (or created next to) the sealed file, then re-encrypts atomically.
 // Any plaintext left behind is removed on exit, error, or Ctrl-C.
-func cmdSeal(args []string) error {
-	envfile, cmd := parseFlags(args)
-	if len(cmd) == 0 {
-		fatal("nothing to run — usage: envsec seal [-f FILE] -- <pull command>")
-	}
+func runSeal(envfile string, pull []string) error {
 	sealed := envfile + ".enc.env"
 
 	// Clean up plaintext however we exit.
@@ -53,7 +69,7 @@ func cmdSeal(args []string) error {
 	}
 
 	// run the repo's pull script (edits envfile in place)
-	if err := runPull(cmd); err != nil {
+	if err := runPull(pull); err != nil {
 		return err
 	}
 
@@ -80,7 +96,7 @@ func cmdSeal(args []string) error {
 	if err := atomicWrite(sealed, sealedBytes); err != nil {
 		return err
 	}
-	fmt.Println("sealed ->", sealed)
+	color.Green("sealed -> %s", sealed)
 	return nil
 }
 

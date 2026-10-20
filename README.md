@@ -138,13 +138,12 @@ Remove the recipient by re-sealing to only the keys you want, or by using `sops 
 
 | File | Purpose |
 |---|---|
-| `main.go` | CLI dispatch + usage |
+| `main.go` | cobra root command, dispatch, grouped help |
 | `keys.go` | key file location, generation, public key derivation |
 | `crypto.go` | sops library wiring (encrypt/decrypt), quote normalization, atomic writes |
-| `flags.go` | `[-f FILE] -- CMD` parsing |
-| `cmd_*.go` | one file per subcommand |
+| `cmd_*.go` | one file per subcommand (constructor + logic) |
 | `main_test.go` | unit + end-to-end tests (round trip, seal, edit, export, addrecipient, env injection) |
 
 ## Notes
 
-- Two direct dependencies (`sops` v3, `age`) at their latest versions; everything else is stdlib.
+- Direct dependencies: `sops` v3, `age` (crypto), `cobra` (CLI), `fatih/color` (status colors, auto-disabled on non-TTY or `NO_COLOR`).

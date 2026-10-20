@@ -99,7 +99,7 @@ func TestSealEndToEnd(t *testing.T) {
 		[]byte("#!/bin/sh\nprintf 'DB_URL=\"postgres://user:pass@host/db\"\\n' > .env.local\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdSeal([]string{"sh", pull}); err != nil {
+	if err := runSeal(".env.local", []string{"sh", pull}); err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	sealed := ".env.local.enc.env"
@@ -117,7 +117,7 @@ func TestSealEndToEnd(t *testing.T) {
 		[]byte("#!/bin/sh\necho 'API_KEY=\"secret2\"' >> .env.local\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdSeal([]string{"sh", pull2}); err != nil {
+	if err := runSeal(".env.local", []string{"sh", pull2}); err != nil {
 		t.Fatalf("re-seal: %v", err)
 	}
 	got, err = decryptSealed(sealed)
@@ -143,7 +143,7 @@ func TestEditEndToEnd(t *testing.T) {
 	if err := os.WriteFile(pull, []byte("#!/bin/sh\necho 'A=1' > .env.local\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdSeal([]string{"sh", pull}); err != nil {
+	if err := runSeal(".env.local", []string{"sh", pull}); err != nil {
 		t.Fatal(err)
 	}
 	sealed := ".env.local.enc.env"
@@ -154,7 +154,7 @@ func TestEditEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EDITOR", editor)
-	if err := cmdEdit(nil); err != nil {
+	if err := runEdit(".env.local"); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 	got, err := decryptSealed(sealed)
@@ -178,7 +178,7 @@ func TestExportWritesPlaintext(t *testing.T) {
 	if err := os.WriteFile(".env.local.enc.env", sealed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdExport(nil); err != nil {
+	if err := runExport(".env.local"); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 	got, err := os.ReadFile(".env.local")
@@ -194,7 +194,7 @@ func TestInitCreatesKey(t *testing.T) {
 	keys := filepath.Join(t.TempDir(), "keys.txt")
 	t.Setenv("SOPS_AGE_KEY_FILE", keys)
 	setKeyEnv()
-	if err := cmdInit(); err != nil {
+	if err := runInit(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	data, err := os.ReadFile(keys)
@@ -230,7 +230,7 @@ func TestInitFixesLooseKeyPerms(t *testing.T) {
 	if err := os.Chmod(keys, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdInit(); err != nil {
+	if err := runInit(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	info, err := os.Stat(keys)
@@ -282,7 +282,7 @@ func TestAddRecipient(t *testing.T) {
 	// A grants B access
 	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
 	setKeyEnv()
-	if err := cmdAddRecipient([]string{bPub}); err != nil {
+	if err := runAddRecipient(".env.local", []string{bPub}); err != nil {
 		t.Fatalf("addrecipient: %v", err)
 	}
 
@@ -312,7 +312,7 @@ func TestAddRecipient(t *testing.T) {
 	}
 
 	// granting the same key again is a no-op
-	if err := cmdAddRecipient([]string{bPub}); err != nil {
+	if err := runAddRecipient(".env.local", []string{bPub}); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
 	recs, _ = recipientsFromSealed(".env.local.enc.env")
@@ -321,7 +321,7 @@ func TestAddRecipient(t *testing.T) {
 	}
 
 	// an invalid public key is rejected
-	if err := cmdAddRecipient([]string{"not-an-age-key"}); err == nil {
+	if err := runAddRecipient(".env.local", []string{"not-an-age-key"}); err == nil {
 		t.Fatal("invalid pubkey was accepted")
 	}
 }

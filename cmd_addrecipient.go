@@ -4,17 +4,33 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fatih/color"
 	sopsage "github.com/getsops/sops/v3/age"
+	"github.com/spf13/cobra"
 )
 
-// cmdAddRecipient grants additional machines access to a sealed file by
+func newAddRecipientCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "addrecipient [-f FILE] PUBKEY...",
+		Short: "grant other machines access to FILE.enc.env",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("no public key given — usage: envsec addrecipient [-f FILE] PUBKEY...")
+			}
+			return nil
+		},
+		RunE: func(c *cobra.Command, args []string) error {
+			return runAddRecipient(fileFlag(c), args)
+		},
+	}
+	cmd.Flags().StringP("file", "f", ".env.local", "secrets file")
+	return cmd
+}
+
+// runAddRecipient grants additional machines access to a sealed file by
 // re-encrypting it to the existing recipients plus the given public keys.
 // Existing recipients are always preserved — never silently dropped.
-func cmdAddRecipient(args []string) error {
-	envfile, rest := parseFlags(args)
-	if len(rest) == 0 {
-		fatal("usage: envsec addrecipient [-f FILE] PUBKEY...")
-	}
+func runAddRecipient(envfile string, pubkeys []string) error {
 	sealed := envfile + ".enc.env"
 	if _, err := os.Stat(sealed); err != nil {
 		fatal("no sealed file %s — run 'envsec seal' first", sealed)
@@ -38,9 +54,9 @@ func cmdAddRecipient(args []string) error {
 	}
 	last := len(groups) - 1
 	var added []string
-	for _, pk := range rest {
+	for _, pk := range pubkeys {
 		if have[pk] {
-			continue // already has access
+			continue
 		}
 		mk, err := sopsage.MasterKeyFromRecipient(pk)
 		if err != nil {
@@ -63,9 +79,9 @@ func cmdAddRecipient(args []string) error {
 	if err := atomicWrite(sealed, out); err != nil {
 		return err
 	}
-	fmt.Printf("added %d recipient(s) to %s:\n", len(added), sealed)
+	color.Green("added %d recipient(s) to %s", len(added), sealed)
 	for _, pk := range added {
-		fmt.Println("  " + pk)
+		fmt.Println("  " + color.CyanString(pk))
 	}
 	return nil
 }

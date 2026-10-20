@@ -6,16 +6,32 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/spf13/cobra"
 )
 
-// cmdRun decrypts the sealed file in memory and execs CMD with the secrets
+func newRunCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run [-f FILE] -- CMD...",
+		Short: "decrypt in memory and run CMD with the secrets",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("nothing to run — usage: envsec run [-f FILE] -- <command>")
+			}
+			return nil
+		},
+		RunE: func(c *cobra.Command, args []string) error {
+			return runRun(fileFlag(c), args)
+		},
+	}
+	cmd.Flags().StringP("file", "f", ".env.local", "secrets file")
+	return cmd
+}
+
+// runRun decrypts the sealed file in memory and execs CMD with the secrets
 // injected into the environment. Secrets never touch disk; exit codes and
 // signals pass through to the caller via exec(3).
-func cmdRun(args []string) error {
-	envfile, cmd := parseFlags(args)
-	if len(cmd) == 0 {
-		fatal("nothing to run — usage: envsec run [-f FILE] -- <command>")
-	}
+func runRun(envfile string, cmd []string) error {
 	sealed := envfile + ".enc.env"
 	if _, err := os.Stat(sealed); err != nil {
 		fatal("no sealed file %s — run 'envsec seal' first", sealed)

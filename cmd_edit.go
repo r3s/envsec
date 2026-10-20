@@ -8,13 +8,26 @@ import (
 	"strings"
 
 	"github.com/getsops/sops/v3"
+	"github.com/spf13/cobra"
 )
 
-// cmdEdit decrypts the sealed file to a 0600 temp file, opens $EDITOR on it,
+func newEditCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "edit [-f FILE]",
+		Short: "open sealed secrets in $EDITOR, re-encrypt on save",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runEdit(fileFlag(c))
+		},
+	}
+	cmd.Flags().StringP("file", "f", ".env.local", "secrets file")
+	return cmd
+}
+
+// runEdit decrypts the sealed file to a 0600 temp file, opens $EDITOR on it,
 // and re-encrypts on save. When the sealed file does not exist yet it is
 // created, encrypted to this machine's public key.
-func cmdEdit(args []string) error {
-	envfile, _ := parseFlags(args)
+func runEdit(envfile string) error {
 	sealed := envfile + ".enc.env"
 
 	var plain []byte
