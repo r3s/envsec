@@ -27,6 +27,39 @@ func decryptSealed(path string) ([]byte, error) {
 	return plain, nil
 }
 
+// loadSealed returns a sealed file's plaintext and its recipients.
+func loadSealed(path string) ([]byte, []sops.KeyGroup, error) {
+	groups, err := keyGroupsFromSealed(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	plain, err := decryptSealed(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return plain, groups, nil
+}
+
+// writeSealed encrypts plaintext to a sealed file, keeping the given
+// recipients. Without recipients it encrypts to this machine's public key.
+func writeSealed(path string, plain []byte, groups []sops.KeyGroup) error {
+	var sealed []byte
+	var err error
+	if len(groups) > 0 {
+		sealed, err = encryptPlainWithKeyGroups(plain, groups)
+	} else {
+		pk, kerr := pubkey()
+		if kerr != nil {
+			return kerr
+		}
+		sealed, err = encryptPlain(plain, []string{pk})
+	}
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, sealed)
+}
+
 func encryptPlain(plain []byte, recipients []string) ([]byte, error) {
 	keys, err := sopsage.MasterKeysFromRecipients(strings.Join(recipients, ","))
 	if err != nil {
@@ -146,25 +179,41 @@ func atomicWrite(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// writePlaintext writes a plaintext file the pull script can read; 0600 keeps
-// secrets private even under a permissive umask.
+// writePlaintext writes secrets with mode 0600. The mode is applied before any
+// data is written, so an existing file with looser permissions (or a hostile
+// umask) can never expose the contents.
 func writePlaintext(path string, data []byte) error {
-	return os.WriteFile(path, data, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // stripOuterQuotes drops matching surrounding quotes so values match dotenv
-// semantics when loaded.
+// semantics when loaded. Comments are left untouched.
 func stripOuterQuotes(line string) string {
+	line = strings.TrimSuffix(line, "\r")
 	eq := strings.IndexByte(line, '=')
-	if eq <= 0 || len(line) <= eq+2 {
+	if eq <= 0 || strings.HasPrefix(line, "#") || len(line) <= eq+2 {
 		return line
 	}
 	key, val := line[:eq], line[eq+1:]
-	if len(val) >= 2 {
-		if (val[0] == '"' && val[len(val)-1] == '"') ||
-			(val[0] == '\'' && val[len(val)-1] == '\'') {
-			return key + "=" + val[1:len(val)-1]
-		}
+	if val[0] == '"' && val[len(val)-1] == '"' ||
+		val[0] == '\'' && val[len(val)-1] == '\'' {
+		return key + "=" + val[1:len(val)-1]
 	}
 	return line
 }

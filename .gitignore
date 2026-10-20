@@ -3,19 +3,19 @@
 *.test
 coverage.out
 
-# Plaintext secrets — never commit these
+# Plaintext secrets
 .env.local
 .env*.local
 
-# envsec temp files (normally removed on exit; may survive a crash/kill)
+# Temp files left behind by a crash or kill
 .edit-*
 .seal-*
 
-# Editor / OS cruft
+# Editor / OS
 .DS_Store
 *~
 *.swp
 .idea/
 .vscode/
 
-# Note: sealed files (*.enc.env) are NOT ignored — committing them is the point.
+# Sealed files (*.enc.env) are intentionally tracked.

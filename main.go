@@ -2,26 +2,46 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
+// exitError carries a child process's exit status through cobra so main can
+// exit with it after all deferred cleanup has run.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
 func main() {
-	// sops resolves age identities from SOPS_AGE_KEY_FILE; export it so
-	// encrypt/decrypt pick up the machine key.
-	setKeyEnv()
-	if err := newRootCmd().Execute(); err != nil {
-		fatal("%v", err)
-	}
+	os.Exit(run(os.Args[1:]))
 }
 
-func fatal(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(os.Stderr, color.New(color.FgRed, color.Bold).Sprintf("envsec: %s", msg))
-	os.Exit(1)
+func run(args []string) int {
+	if err := setKeyEnv(); err != nil {
+		printErr(err)
+		return 1
+	}
+	root := newRootCmd()
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		var ee exitError
+		if errors.As(err, &ee) {
+			return ee.code
+		}
+		printErr(err)
+		return 1
+	}
+	return 0
+}
+
+func printErr(err error) {
+	fmt.Fprintln(os.Stderr, color.New(color.FgRed, color.Bold).Sprintf("envsec: %v", err))
 }
 
 func newRootCmd() *cobra.Command {
@@ -57,7 +77,6 @@ func newRootCmd() *cobra.Command {
 }
 
 // rootHelp prints the curated, grouped help overview for the bare command.
-// Per-command help is handled by cobra's standard template (see newRootCmd).
 func rootHelp(c *cobra.Command, _ []string) {
 	w := c.OutOrStdout()
 	color.New(color.Bold).Fprintf(w, "envsec — per-machine encrypted .env workflow (sops + age, compiled in)\n\n")
@@ -114,8 +133,31 @@ func findSubCommand(c *cobra.Command, name string) *cobra.Command {
 	return nil
 }
 
-// fileFlag returns the value of the -f/--file flag on cmd.
+func addFileFlag(cmd *cobra.Command) {
+	cmd.Flags().StringP("file", "f", ".env.local", "secrets file")
+}
+
 func fileFlag(c *cobra.Command) string {
 	f, _ := c.Flags().GetString("file")
 	return f
+}
+
+// onInterrupt runs cleanup when the process is interrupted and then exits.
+// The returned stop function must be deferred to release the signal handler.
+func onInterrupt(cleanup func()) (stop func()) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-done:
+		case <-sig:
+			cleanup()
+			os.Exit(130)
+		}
+	}()
+	return func() {
+		signal.Stop(sig)
+		close(done)
+	}
 }

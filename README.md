@@ -10,10 +10,10 @@ This repository is **LLM-generated**: the code, tests, and documentation were pr
 
 Whenever I set up a repo, I keep my API keys and other credentials in a `.env` file (or `.env.local`). I've always wondered: what if a malicious actor gains access to my system, or reads my files remotely, and I never know it? Suddenly all of those secrets are theirs to use. This utility prevents that by encrypting the files at rest.
 
-- Secrets live in the repo as a **sealed dotenv file** (`FILE.enc.env`).
-- Each machine has its **own age key**, so only authorized machines can decrypt.
+- Secrets live in the repo as a sealed dotenv file (`FILE.enc.env`).
+- Each machine has its own age key, so only authorized machines can decrypt.
 - Nothing in the repo is machine-specific: the public key is derived from the local private key.
-- **Offline.** No server, no SaaS, no vendor lock-in (age & sops are open standards; you can decrypt your files with the `age`/`sops` CLIs directly).
+- Offline. No server, no SaaS, no vendor lock-in (age & sops are open standards; you can decrypt your files with the `age`/`sops` CLIs directly).
 
 ## Install
 
@@ -61,7 +61,7 @@ envsec seal -- ./scripts/pull-secrets.sh
 
 `seal` decrypts the current sealed file to a plaintext `.env.local` *before* running your pull script (so partial pulls can read the existing values), then re-encrypts the result atomically. The plaintext is removed on success, error, or Ctrl-C.
 
-**Commit `FILE.enc.env`** — that is the only artifact that goes in the repo.
+Commit `FILE.enc.env` — that is the only artifact that goes in the repo.
 
 ### 3. Give other machines access
 
@@ -76,7 +76,7 @@ envsec init                          # prints: This machine's PUBLIC key: age1..
 envsec addrecipient age1mn2...       # grant the new machine access
 ```
 
-Then commit the re-sealed file. The new machine pulls and can now `run`/`edit`. Recipients are **preserved** on every re-seal/edit/add, so nobody is ever silently locked out.
+Then commit the re-sealed file. The new machine pulls and can now `run`/`edit`. Recipients are preserved on every re-seal/edit/add, so nobody is ever silently locked out.
 
 ### 4. Daily use
 
@@ -127,10 +127,10 @@ Remove the recipient by re-sealing to only the keys you want, or by using `sops 
 
 ## Security properties
 
-- `run` decrypts **in memory** and `exec(3)`s the command — secrets never touch disk.
+- `run` decrypts in memory and `exec(3)`s the command — secrets never touch disk.
 - `seal`/`edit`/`export` write plaintext with mode `0600` and remove it on exit.
-- Sealed output is written **atomically** (temp file + rename), so a crash can't corrupt the file.
-- Recipients are **preserved** on every re-seal, edit, and add — access is never silently revoked.
+- Sealed output is written atomically (temp file + rename), so a crash can't corrupt the file.
+- Recipients are preserved on every re-seal, edit, and add — access is never silently revoked.
 - The envelope format is byte-identical to `sops encrypt/decrypt`, so files interoperate with the sops CLI.
 
 ## Requirements
@@ -138,16 +138,6 @@ Remove the recipient by re-sealing to only the keys you want, or by using `sops 
 - Go 1.27+ to build; the binary itself has no runtime dependencies.
 - An age key (run `envsec init`).
 
-## Layout
+## Dependencies
 
-| File | Purpose |
-|---|---|
-| `main.go` | cobra root command, dispatch, grouped help |
-| `keys.go` | key file location, generation, public key derivation |
-| `crypto.go` | sops library wiring (encrypt/decrypt), quote normalization, atomic writes |
-| `cmd_*.go` | one file per subcommand (constructor + logic) |
-| `main_test.go` | unit + end-to-end tests (round trip, seal, edit, export, addrecipient, env injection) |
-
-## Notes
-
-- Direct dependencies: `sops` v3, `age` (crypto), `cobra` (CLI), `fatih/color` (status colors, auto-disabled on non-TTY or `NO_COLOR`).
+`sops` v3 and `age` for crypto, `cobra` for the CLI, and `fatih/color` for status colors (auto-disabled on non-TTY or when `NO_COLOR` is set).

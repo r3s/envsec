@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setupKey installs a fresh age key in a temp dir for the duration of the test.
@@ -14,25 +16,38 @@ func setupKey(t *testing.T) string {
 	t.Helper()
 	keys := filepath.Join(t.TempDir(), "keys.txt")
 	t.Setenv("SOPS_AGE_KEY_FILE", keys)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatalf("setKeyEnv: %v", err)
+	}
 	if err := ensureKey(); err != nil {
 		t.Fatalf("ensureKey: %v", err)
 	}
 	return keys
 }
 
+func mustPub(t *testing.T) string {
+	t.Helper()
+	pk, err := pubkey()
+	if err != nil {
+		t.Fatalf("pubkey: %v", err)
+	}
+	return pk
+}
+
 func TestStripOuterQuotes(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`A="x"`, "A=x"},
 		{`A='x'`, "A=x"},
-		{`A=x`, "A=x"},       // unquoted untouched
-		{`A="x`, `A="x`},     // unbalanced quote untouched
-		{`A=x"`, `A=x"`},     // trailing quote only untouched
-		{`A=`, "A="},         // no value
-		{`A=""`, "A="},       // empty quoted value
-		{`A="x"y`, `A="x"y`}, // quotes don't wrap the whole value
-		{`A="x=y"`, "A=x=y"}, // quotes around value containing '='
-		{`# c="x"`, "# c=x"}, // comments allowed (quotes still normalized)
+		{`A=x`, "A=x"},                     // unquoted untouched
+		{`A="x`, `A="x`},                   // unbalanced quote untouched
+		{`A=x"`, `A=x"`},                   // trailing quote only untouched
+		{`A=`, "A="},                       // no value
+		{`A=""`, "A="},                     // empty quoted value
+		{`A="x"y`, `A="x"y`},               // quotes don't wrap the whole value
+		{`A="x=y"`, "A=x=y"},               // quotes around value containing '='
+		{`# c="x"`, `# c="x"`},             // comments are never rewritten
+		{"A=\"x\"\r", "A=x"},               // CRLF line ending
+		{"# note=\"x\"\r", "# note=\"x\""}, // CRLF comment untouched apart from \r
 	}
 	for _, c := range cases {
 		if got := stripOuterQuotes(c.in); got != c.want {
@@ -65,14 +80,40 @@ func TestBuildRunEnv(t *testing.T) {
 	}
 }
 
+// TestWritePlaintextPerms verifies plaintext is 0600 even when the target
+// already exists with looser permissions.
+func TestWritePlaintextPerms(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env.local")
+	if err := os.WriteFile(path, []byte("OLD=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePlaintext(path, []byte("NEW=2\n")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %o, want 600", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "NEW=2\n" {
+		t.Errorf("content = %q", data)
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
 	setupKey(t)
 	plain := []byte("FOO=bar\nBAZ=\"kept as content\"\n# comment\nEMPTY=\n")
-	sealed, err := encryptPlain(plain, []string{pubkey()})
+	sealed, err := encryptPlain(plain, []string{mustPub(t)})
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	if !strings.Contains(string(sealed), pubkey()) {
+	if !strings.Contains(string(sealed), mustPub(t)) {
 		t.Error("sealed file does not mention this machine's recipient")
 	}
 	path := filepath.Join(t.TempDir(), "test.enc.env")
@@ -134,13 +175,57 @@ func TestSealEndToEnd(t *testing.T) {
 	}
 }
 
+// TestSealFailureRemovesPlaintext verifies that a failing pull command still
+// cleans up the decrypted plaintext file.
+func TestSealFailureRemovesPlaintext(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	setupKey(t)
+
+	pull := filepath.Join(dir, "fail.sh")
+	script := "#!/bin/sh\nprintf 'SECRET=leaked\\n' > .env.local\nexit 3\n"
+	if err := os.WriteFile(pull, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runSeal(".env.local", []string{"sh", pull})
+	var ee exitError
+	if !errors.As(err, &ee) || ee.code != 3 {
+		t.Fatalf("err = %v, want exit status 3", err)
+	}
+	if _, err := os.Stat(".env.local"); !os.IsNotExist(err) {
+		t.Error("plaintext .env.local survived a failed pull")
+	}
+}
+
+// TestSealWithoutKeyRemovesPlaintext verifies the no-key error path also
+// cleans up the plaintext produced by the pull script.
+func TestSealWithoutKeyRemovesPlaintext(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("SOPS_AGE_KEY_FILE", filepath.Join(t.TempDir(), "absent.txt"))
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
+	pull := filepath.Join(dir, "pull.sh")
+	script := "#!/bin/sh\nprintf 'SECRET=leaked\\n' > .env.local\n"
+	if err := os.WriteFile(pull, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSeal(".env.local", []string{"sh", pull}); err == nil {
+		t.Fatal("expected an error without a key")
+	}
+	if _, err := os.Stat(".env.local"); !os.IsNotExist(err) {
+		t.Error("plaintext .env.local survived a failed seal")
+	}
+}
+
 func TestEditEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	setupKey(t)
 
 	pull := filepath.Join(dir, "pull.sh")
-	if err := os.WriteFile(pull, []byte("#!/bin/sh\necho 'A=1' > .env.local\n"), 0o755); err != nil {
+	if err := os.WriteFile(pull, []byte("#!/bin/sh\necho 'A=\"1\"' > .env.local\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := runSeal(".env.local", []string{"sh", pull}); err != nil {
@@ -150,7 +235,7 @@ func TestEditEndToEnd(t *testing.T) {
 
 	editor := filepath.Join(dir, "editor.sh")
 	if err := os.WriteFile(editor,
-		[]byte("#!/bin/sh\nprintf 'A=2\\nB=3\\n' > \"$1\"\n"), 0o755); err != nil {
+		[]byte("#!/bin/sh\nprintf 'A=2\\nB=\"3\"\\n' > \"$1\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EDITOR", editor)
@@ -166,12 +251,45 @@ func TestEditEndToEnd(t *testing.T) {
 	}
 }
 
+// TestEditNoChangeLeavesFileUntouched verifies that saving without edits does
+// not rewrite (and thus dirty) the sealed file.
+func TestEditNoChangeLeavesFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	setupKey(t)
+
+	pull := filepath.Join(dir, "pull.sh")
+	if err := os.WriteFile(pull, []byte("#!/bin/sh\necho 'A=1' > .env.local\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSeal(".env.local", []string{"sh", pull}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(".env.local.enc.env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	t.Setenv("EDITOR", "true")
+	if err := runEdit(".env.local"); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	after, err := os.ReadFile(".env.local.enc.env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("sealed file was rewritten although nothing changed")
+	}
+}
+
 func TestExportWritesPlaintext(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	setupKey(t)
 
-	sealed, err := encryptPlain([]byte("A=1\n"), []string{pubkey()})
+	sealed, err := encryptPlain([]byte("A=1\n"), []string{mustPub(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +311,9 @@ func TestExportWritesPlaintext(t *testing.T) {
 func TestInitCreatesKey(t *testing.T) {
 	keys := filepath.Join(t.TempDir(), "keys.txt")
 	t.Setenv("SOPS_AGE_KEY_FILE", keys)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	if err := runInit(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -204,16 +324,13 @@ func TestInitCreatesKey(t *testing.T) {
 	if !strings.Contains(string(data), "AGE-SECRET-KEY-1") {
 		t.Errorf("key file does not contain a secret key line")
 	}
-	pk := pubkey()
-	if !strings.HasPrefix(pk, "age1") {
+	if pk := mustPub(t); !strings.HasPrefix(pk, "age1") {
 		t.Errorf("pubkey %q does not look like an age public key", pk)
 	}
 }
 
-// TestKeyFilePermissions verifies a freshly created key is owner read/write
-// only (0600), regardless of the process umask.
 func TestKeyFilePermissions(t *testing.T) {
-	keys := setupKey(t) // generates the key
+	keys := setupKey(t)
 	info, err := os.Stat(keys)
 	if err != nil {
 		t.Fatal(err)
@@ -223,8 +340,7 @@ func TestKeyFilePermissions(t *testing.T) {
 	}
 }
 
-// TestInitFixesLooseKeyPerms verifies init tightens a pre-existing key whose
-// permissions are too open (e.g. 0644).
+// TestInitFixesLooseKeyPerms verifies init tightens a key file that is too open.
 func TestInitFixesLooseKeyPerms(t *testing.T) {
 	keys := setupKey(t)
 	if err := os.Chmod(keys, 0o644); err != nil {
@@ -242,28 +358,45 @@ func TestInitFixesLooseKeyPerms(t *testing.T) {
 	}
 }
 
-// TestAddRecipient simulates a second machine: B seals a file with their own
-// key, A grants B access, and B can then decrypt it.
+// TestDoctorSurvivesCorruptKey verifies doctor reports a broken key instead of
+// exiting.
+func TestDoctorSurvivesCorruptKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.txt")
+	if err := os.WriteFile(path, []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SOPS_AGE_KEY_FILE", path)
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDoctor(); err != nil {
+		t.Errorf("doctor returned error: %v", err)
+	}
+}
+
+// TestAddRecipient simulates two machines: A seals a file, grants B access,
+// and B can then decrypt it.
 func TestAddRecipient(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	// machine A
 	keyA := setupKey(t)
-	aPub := pubkey()
+	aPub := mustPub(t)
 
-	// machine B: its own key file, in another temp dir
 	keyB := filepath.Join(t.TempDir(), "keys.txt")
 	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	if err := ensureKey(); err != nil {
 		t.Fatalf("ensureKey (B): %v", err)
 	}
-	bPub := pubkey()
+	bPub := mustPub(t)
 
-	// back to A, seal a file to A only
 	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	sealed, err := encryptPlain([]byte("SECRET=value\n"), []string{aPub})
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
@@ -272,21 +405,22 @@ func TestAddRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// B cannot decrypt yet
 	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := decryptSealed(".env.local.enc.env"); err == nil {
 		t.Fatal("B could decrypt before being granted access")
 	}
 
-	// A grants B access
 	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	if err := runAddRecipient(".env.local", []string{bPub}); err != nil {
 		t.Fatalf("addrecipient: %v", err)
 	}
 
-	// both recipients present in metadata
 	recs, err := recipientsFromSealed(".env.local.enc.env")
 	if err != nil {
 		t.Fatal(err)
@@ -295,9 +429,10 @@ func TestAddRecipient(t *testing.T) {
 		t.Errorf("recipients after add = %v, want %v", recs, []string{aPub, bPub})
 	}
 
-	// B can decrypt now; A still can
 	t.Setenv("SOPS_AGE_KEY_FILE", keyB)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	got, err := decryptSealed(".env.local.enc.env")
 	if err != nil {
 		t.Fatalf("B could not decrypt after grant: %v", err)
@@ -306,7 +441,9 @@ func TestAddRecipient(t *testing.T) {
 		t.Errorf("B got %q", got)
 	}
 	t.Setenv("SOPS_AGE_KEY_FILE", keyA)
-	setKeyEnv()
+	if err := setKeyEnv(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := decryptSealed(".env.local.enc.env"); err != nil {
 		t.Fatalf("A lost access after grant: %v", err)
 	}
@@ -320,7 +457,6 @@ func TestAddRecipient(t *testing.T) {
 		t.Errorf("recipients after duplicate add = %v", recs)
 	}
 
-	// an invalid public key is rejected
 	if err := runAddRecipient(".env.local", []string{"not-an-age-key"}); err == nil {
 		t.Fatal("invalid pubkey was accepted")
 	}
