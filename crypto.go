@@ -27,8 +27,6 @@ func decryptSealed(path string) ([]byte, error) {
 	return plain, nil
 }
 
-// encryptPlain encrypts plaintext dotenv for the given recipients (this
-// machine's pubkey, or the recipients found in an existing sealed file).
 func encryptPlain(plain []byte, recipients []string) ([]byte, error) {
 	keys, err := sopsage.MasterKeysFromRecipients(strings.Join(recipients, ","))
 	if err != nil {
@@ -83,8 +81,8 @@ func encryptPlainWithKeyGroups(plain []byte, keyGroups []sops.KeyGroup) ([]byte,
 	return sealed, nil
 }
 
-// keyGroupsFromSealed rebuilds fresh master keys from a sealed file's metadata,
-// preserving the recipient structure (order and groups).
+// keyGroupsFromSealed rebuilds fresh master keys from a sealed file's
+// metadata (they carry no encrypted data key yet), preserving structure.
 func keyGroupsFromSealed(path string) ([]sops.KeyGroup, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -110,7 +108,6 @@ func keyGroupsFromSealed(path string) ([]sops.KeyGroup, error) {
 	return groups, nil
 }
 
-// recipientsFromSealed flattens all recipients in a sealed file to strings.
 func recipientsFromSealed(path string) ([]string, error) {
 	groups, err := keyGroupsFromSealed(path)
 	if err != nil {
@@ -172,7 +169,6 @@ func stripOuterQuotes(line string) string {
 	return line
 }
 
-// normalizeDotenv strips outer quotes from every line of a plaintext dotenv.
 func normalizeDotenv(data []byte) []byte {
 	lines := bytes.Split(data, []byte("\n"))
 	for i, line := range lines {
@@ -181,7 +177,6 @@ func normalizeDotenv(data []byte) []byte {
 	return bytes.Join(lines, []byte("\n"))
 }
 
-// parseEnvLines returns KEY=VALUE lines, skipping blank lines and comments.
 func parseEnvLines(plain []byte) []string {
 	var out []string
 	for _, line := range strings.Split(string(plain), "\n") {
