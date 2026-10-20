@@ -2,6 +2,10 @@
 
 Per-machine encrypted `.env` workflow using [sops](https://github.com/getsops/sops) + [age](https://age-encryption.org), as a single static Go binary. No other tools are required — sops and age are compiled in as Go libraries.
 
+## Disclaimer
+
+This repository is **LLM-generated**: the code, tests, and documentation were produced with the assistance of an AI coding agent and reviewed by a human. It is provided **as-is, use at your own risk**. Review the code (especially the crypto paths) and test it yourself before trusting it with real secrets.
+
 ## Why
 
 Whenever I set up a repo, I keep my API keys and other credentials in a `.env` file (or `.env.local`). I've always wondered: what if a malicious actor gains access to my system, or reads my files remotely, and I never know it? Suddenly all of those secrets are theirs to use. This utility prevents that by encrypting the files at rest.
